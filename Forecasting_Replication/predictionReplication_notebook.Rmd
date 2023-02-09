@@ -1,0 +1,578 @@
+---
+title: "Replication of Public and Private Information in International Crises: Diplomatic Correspondence and Conflict Anticipation (ISQ)"
+author: ""
+date: ""
+output: 
+  pdf_document:
+    extra_dependencies: ["longtable"]
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+if (!require("pacman")) install.packages("pacman")
+library(pacman)
+pacman::p_load(
+  chron, fields, knitr, MASS, gridExtra, grid, ggplot2, ROCR, texreg, pracma, caret, mlbench, dplyr, readxl, lubridate, readr, stringr, ggpubr, xtable, ggpubr
+)
+
+#setwd(dirname(getActiveDocumentContext()$path))
+```
+
+NOTE: This notebook reproduces the in- and out-of-sample analyses in the paper. For the initial processing and text analysis of the cables, please see folder "topic_models"
+
+# Data Preparation
+
+```{r, warning=FALSE, results='hide'}
+source('dataPrep.R')
+```
+
+# In-sample estimation
+
+
+```{r}
+#Define the formulae
+m1 <- read.csv('Data/preppedPredictionData.csv')
+
+################# FORMULAS ################# 
+
+varnames.containing.topic  <- grep("topic", names(m1), value = TRUE)
+topic.vars.list <- varnames.containing.topic[-grep('d1', varnames.containing.topic)]
+topic.vars.list <- topic.vars.list[grep('l1', topic.vars.list)]
+topic.vars.list <- topic.vars.list[-1]
+topic.vars <- paste(topic.vars.list, collapse='+')
+str.vars <- 'l1.str_milex + l1.str_milper  + l1.str_imports + l1.str_exports + l1.str_pop + l1.str_irst + timeSinceMid + I(timeSinceMid^2)+ I(timeSinceMid^3)'
+bonds.vars <- 'l1.bonds_close + lr1.bonds_close'
+varnames.containing.news  <- grep("news", names(m1), value = TRUE)
+news.vars.list <- varnames.containing.news[grep('l1', varnames.containing.news)]
+news.vars <- 'l1.news_t0 + l1.news_t1 + l1.news_t2 + l1.news_t3 + l1.news_t4 + l1.news_t5 + l1.news_t6 + l1.news_t7 + l1.news_t8 + l1.news_t9 + l1.news_t10 + l1.news_t11 + l1.news_t12 + l1.news_t13 + l1.news_t14'
+
+## BASE FORMULA
+# define the models for binary predictions
+
+base.formula_ttw <- as.formula('timeToMid ~ timeSinceMid + I(timeSinceMid^2) + I(timeSinceMid^3)')
+
+## Structure formula:
+formula_str_ttw <- as.formula(paste('timeToMid ~ ', str.vars))
+
+## Bonds formula
+formula_str_bonds_ttw <- as.formula(paste('timeToMid ~  ', str.vars,'+', bonds.vars ))
+
+## News formula
+formula_str_news_ttw <- as.formula(paste('timeToMid ~  ', str.vars,'+', news.vars ))
+
+## Cables formula
+formula_str_cables_ttw <- as.formula(paste('timeToMid ~  ', str.vars,'+', topic.vars ))
+
+## Everything except cables
+formula_str_NOcables_bonds_news_ttw <- as.formula(paste('timeToMid ~ ', str.vars,'+', news.vars, '+', bonds.vars))
+
+## Everything
+formula_str_cables_bonds_news_ttw <- as.formula(paste('timeToMid ~ ', str.vars,'+', topic.vars ,'+', news.vars, '+', bonds.vars))
+
+# create a df without missing obs
+m1T <- m1[!is.na(m1$bonds_close) & !is.na(m1$l1.bonds_close) &!is.na(m1$lr1.bonds_close) 
+          & !is.na(m1$topic1)& !is.na(m1$l1.topic1) 
+          & !is.na(m1$topic2)& !is.na(m1$l1.topic2) 
+          & !is.na(m1$topic3)& !is.na(m1$l1.topic3) 
+          & !is.na(m1$topic4)& !is.na(m1$l1.topic4)
+          & !is.na(m1$topic5) &!is.na(m1$l1.topic5)
+          & !is.na(m1$topic6) &!is.na(m1$l1.topic6)
+          & !is.na(m1$topic7) &!is.na(m1$l1.topic7)
+          & !is.na(m1$topic8) &!is.na(m1$l1.topic8)
+          & !is.na(m1$topic9) &!is.na(m1$l1.topic9)
+          & !is.na(m1$topic10)& !is.na(m1$l1.topic10)
+          & !is.na(m1$topic11)& !is.na(m1$l1.topic11)
+          & !is.na(m1$topic12)& !is.na(m1$l1.topic12)
+          & !is.na(m1$topic13)& !is.na(m1$l1.topic13)
+          & !is.na(m1$topic14)& !is.na(m1$l1.topic14)
+          & !is.na(m1$topic15)& !is.na(m1$l1.topic15)
+          & !is.na(m1$topic16)& !is.na(m1$l1.topic16)
+          & !is.na(m1$topic17)& !is.na(m1$l1.topic17)
+          & !is.na(m1$topic18)& !is.na(m1$l1.topic18)
+          & !is.na(m1$topic19)& !is.na(m1$l1.topic19)
+          & !is.na(m1$topic20)& !is.na(m1$l1.topic20)
+          & !is.na(m1$topic21)& !is.na(m1$l1.topic21)
+          & !is.na(m1$topic22)& !is.na(m1$l1.topic22)
+          & !is.na(m1$topic23) &!is.na(m1$l1.topic23)
+          & !is.na(m1$topic24) &!is.na(m1$l1.topic24)
+          & !is.na(m1$topic25) &!is.na(m1$l1.topic25)
+          ,]
+
+
+lm.formulas <- list(base.formula_ttw, formula_str_ttw, formula_str_bonds_ttw, formula_str_news_ttw, 		formula_str_NOcables_bonds_news_ttw, 
+                    formula_str_cables_ttw, formula_str_cables_bonds_news_ttw)
+
+lms <- list()
+index <- 0
+for(form in lm.formulas){
+  index <- index + 1
+  lm1 <- lm(form, data = m1T)
+  lms[[index]] <- lm1
+}
+
+lms.formulas.light <- list(formula_str_ttw, 
+                           formula_str_NOcables_bonds_news_ttw, 
+                           formula_str_cables_bonds_news_ttw)
+
+lms.light <- list()
+index <- 0
+for(form in lms.formulas.light){
+  index <- index + 1
+  lm1 <- lm(form, data = m1T)
+  lms.light[[index]] <- lm1
+}
+```
+
+## Table 1 (manuscript)
+
+```{r, echo = FALSE, results = 'asis'}
+sink('Results/table1.tex')
+texreg(c(lms.light), 
+       omit.coef=c('topic|news'), 
+       stars = c(0.01, 0.05),fontsize = 'footnotesize',
+       custom.gof.rows = list("Cables Topics Included" = c('NO', "NO", "YES"),
+                              "News Topics Included" = c('NO', "YES", "YES")),
+       custom.model.names = c('Base', "Public Info. (S+ Bonds + News)", 
+                              "Public + Private Info. (S+Bonds+News+Cables)"), 
+       custom.note =("%stars."), digits=2,
+       caption = 'Time to next MID as a function of public and private information. Coefficients on the 26 cables topics and on the 14 news topics not reported (see appendix for full results and additional models).  Starred coefficients are lagged',
+       custom.coef.names = c("Intercept", 
+                             "Military Exp*","Military Pers*","Imports*", "Exports*", "Population*", "Iron+Steel Prod.*", "Time Since MID", "Time Since MID$^2$", "Time Since MID$^3$",
+                             "Bond Close*", "Bond Return (log)*")
+)
+sink()
+```
+
+
+## Table 3 (appendix)
+
+```{r}
+cableNumbers <- 1:25
+cableLabels <- apply(expand.grid('*Cable', cableNumbers), 	1, function(x)paste(x[1], x[2]))
+newsLabels <- apply(expand.grid('*News', 1:14),1,  function(x)paste(x[1], x[2]))
+```
+
+```{r, echo = FALSE, results = 'asis'}
+sink('Results/table3_appendix.tex')
+texreg(c(lms), 
+       #omit.coef=c('topic|news'), 
+       stars = c(0.01, 0.05), longtable=T, use.packages=F, fontsize = 'footnotesize',
+       custom.model.names = c('Base', "Structural","S+Bonds", "S+News", "S+Bonds+News", "S+Cables",
+                              "S+Bonds+News+Cables"), 
+       custom.note =("%stars."),
+       caption = 'Time to next MID as a function of public and private information (full results).  Starred coefficients are lagged',
+       custom.coef.names = c("Intercept", "Time Since MID", "Time Since MID$^2$", "Time Since MID$^3$","Military Exp*","Military Pers*","Imports*", "Exports*", "Population*", "Iron+Steel Prod.*",   "Bond Close*", "Bond Return (log)*", newsLabels ,cableLabels  )
+)
+sink()
+
+```
+
+\clearpage
+
+
+
+
+
+
+# Out-of-sample predictions and evaluation
+
+First run an iterative loop. Learn from t1->t200, predict on t201, etc. Collect these predictions in m1
+
+```{r}
+
+##  initialize the variables where we'll store our results
+m1T <- m1[!is.na(m1$bonds_close) &!is.na(m1$l1.bonds_close) &
+            !is.na(m1$lr1.bonds_close),]
+m1T$pWar.glm.base <- m1T$pWar.glm.topics <- m1T$pWar.lm.base <- m1T$pWar.lm.topics <- m1T$pWar.glm.str <- m1T$pWar.glm.str_all <- m1T$pWar.lm.base <-m1T$pWar.lm.str <- m1T$pWar.lm.str.bonds <- m1T$pWar.lm.str.news <- m1T$pWar.lm.str.cables <- m1T$pWar.lm.str.cables.bonds.newsbondstopics <- m1T$pWar.lm.bondstopics <- m1T$pWar.lm.bondsall <- m1T$pWar.lm.news1 <- m1T$pWar.lm.news2 <- m1T$pWar.lm.str.cables.bonds.news <- NA
+
+for(endTime in 100:(nrow(m1T)-1)){
+  if(endTime %%50 ==0){
+    print( paste('...', endTime,'predictions completed, up to',m1T$date[endTime]) )
+  }
+  learning.data <- m1T[1:endTime,]
+  tryCatch({ # to ensure the loop continues even if there are errors
+
+    ## lm time to war ~ variables:
+    lm.base <- lm(base.formula_ttw, data = learning.data)
+    lm.str <- lm(formula_str_ttw, data = learning.data)
+    lm.str.bonds <- lm(formula_str_bonds_ttw, data = learning.data)
+    lm.str.news <- lm(formula_str_news_ttw, data = learning.data)
+    lm.str.NOcables.bonds.news <- lm(formula_str_NOcables_bonds_news_ttw, data = learning.data)
+    lm.str.cables <- lm(formula_str_cables_ttw, data = learning.data)
+    lm.str.cables.bonds.news <- lm(formula_str_cables_bonds_news_ttw, data = learning.data)
+
+
+    ## Out of sample predictions
+    m1T$pWar.lm.base[endTime+1] <- predict(lm.base, newdata=m1T[endTime,], type = 'response')
+    m1T$pWar.lm.str[endTime+1] <- predict(lm.str, newdata=m1T[endTime,], type = 'response')
+    m1T$pWar.lm.str.bonds[endTime+1] <- predict(lm.str.bonds, newdata=m1T[endTime,], type = 'response')
+    m1T$pWar.lm.str.news[endTime+1] <- predict(lm.str.news, newdata=m1T[endTime,], type = 'response')
+    m1T$pWar.lm.str.NOcables.bonds.news[endTime+1] <- predict(lm.str.NOcables.bonds.news, newdata=m1T[endTime,], type = 'response')
+    m1T$pWar.lm.str.cables[endTime+1] <- predict(lm.str.cables, newdata=m1T[endTime,], type = 'response')
+    m1T$pWar.lm.str.cables.bonds.news[endTime+1] <- predict(lm.str.cables.bonds.news, newdata=m1T[endTime,], type = 'response')
+
+
+  },
+  error=function(e){}#cat('ERROR:', conditionMessage(e), '\n')}
+  )
+}
+```
+
+## MAE figures
+
+```{r, echo = FALSE}
+base.error <- (abs(m1T$timeToMid - m1T$pWar.lm.base))          #structure
+str.error <- (abs(m1T$timeToMid - m1T$pWar.lm.str))               # S
+str.bonds.error <- (abs(m1T$timeToMid - m1T$pWar.lm.str.bonds))     #S+bonds
+str.news.error <- (abs(m1T$timeToMid - m1T$pWar.lm.str.news))# S+news
+str.Nocables.all.error <- (abs(m1T$timeToMid - m1T$pWar.lm.str.NOcables.bonds.news)) # all minus cables
+str.cables.error <- (abs(m1T$timeToMid - m1T$pWar.lm.str.cables)) # S+cables
+all.error <- (abs(m1T$timeToMid - m1T$pWar.lm.str.cables.bonds.news)) # Everything
+
+for(output in c('appendix', 'main')){
+  if(output == 'appendix') these.errors <- c('base.error', 'str.error', 'str.bonds.error', 'str.news.error', 'str.Nocables.all.error', 'str.cables.error', 'all.error')
+  if(output == 'main') these.errors <- c('str.error', 'str.Nocables.all.error', 'all.error')
+
+  lower.CI <- upper.CI <- NULL # store CIs here
+  for(this.error in these.errors) {
+    print(paste('bootstrapping for ', this.error))
+    set.seed(123)
+    boot.obj <- NULL
+    for(i in 1:1000){
+      new.object <- sample(get(this.error), length(get(this.error)), replace = T)
+      boot.obj <- c(boot.obj, mean(new.object, na.rm=T))
+    }
+
+    lower.CI <- c(lower.CI, quantile(boot.obj, 0.025, na.rm=T))
+    upper.CI <- c(upper.CI, quantile(boot.obj, 0.975, na.rm=T))
+
+    rm(new.object)
+
+  }
+
+
+  ## vector of errors
+
+  m.error <- NULL
+  if(output == 'appendix'){
+    m.error <- c(
+      mean(base.error, na.rm=T),
+      mean(str.error, na.rm=T),
+      mean(str.bonds.error, na.rm=T),
+      mean(str.news.error, na.rm=T),
+      mean(str.Nocables.all.error, na.rm=T),
+      mean(str.cables.error, na.rm=T),
+      mean(all.error, na.rm=T)  )
+  }
+
+  if(output == 'main'){
+    m.error <- c(
+      mean(str.error, na.rm=T),
+      mean(str.Nocables.all.error, na.rm=T),
+      mean(all.error, na.rm=T)  )
+  }
+
+
+  
+  if(output == 'appendix') models <- c("Base","Structure", "S + Bonds", 'S + News', 'S + Bonds + News', 'S + Cables', 'S + Bonds + News + Cables')
+  if(output == 'main') models <- c("Base + Struct.", 'Public Info.', 'Public + Private Info.')
+  toplot <- data.frame(models, m.error, lower.CI, upper.CI)
+  
+
+  # Figure 2 (appendix): MAE results for all models
+  if(output == 'appendix'){
+    ##pdf("Results/MAEfig_Appendix.pdf")
+    {
+      print(ggplot(toplot, aes((m.error), reorder(models, m.error)))   +
+              geom_errorbarh(aes(xmin = lower.CI, xmax = upper.CI, height=.1), colour=c(rep('#888888', 5), rep('black',2)))+
+              geom_point(size=3, colour = c(rep('#888888', 5), rep('black',2)))+
+              labs(y="", x="MAE") + theme_bw() +
+              scale_y_discrete(labels = function(y) str_wrap(y, width = 13)) +
+              theme(legend.position="none", plot.margin = margin(0.5, 0.9, 0.5, 0, "cm"),
+                    axis.text.y =  element_text(size=16,  vjust=0.2, colour=rev(c(rep('#888888', 5), rep('black',2)))),
+                    axis.text.x = element_text(size=16),
+                    axis.title.x = element_text(size=18)))
+
+    }
+    ##dev.off()
+  }
+
+  if(output == 'main'){
+
+    # Figure 3 (main text): MAE results for all models
+    ##pdf("Results/MAEfig_mainText.pdf")
+    {
+      print(ggplot(toplot, aes((m.error), reorder(models, m.error)))   +
+              geom_errorbarh(aes(xmin = lower.CI, xmax = upper.CI, height=.1),
+                             #colour=c(rep('#888888', 2), rep('black',1))
+              )+
+              geom_point(size=3,
+                         #colour = c(rep('#888888', 2), rep('black',1))
+              )+
+              labs(y="", x="MAE") + theme_bw() +
+              scale_y_discrete(labels = function(y) str_wrap(y, width = 13)) +
+              theme(aspect.ratio = 1.3/2,legend.position="none",
+                    plot.margin = margin(0.5, 0.4, 0.5, 0, "cm"),
+                    axis.text.y =  element_text(size=16,  vjust=0.2,
+                                                #colour=rev(c(rep('#888888', 5), rep('black',2)))
+                    ),
+                    axis.text.x = element_text(size=16),
+                    axis.title.x = element_text(size=18)))
+    }
+    ##dev.off()
+  }
+}
+
+```
+
+\newpage
+
+## Significance tests (appendix table 4)
+```{r, echo = FALSE}
+# t-tests
+# matrix of t-test
+# mat : data.frame or matrix
+# ... : further arguments to pass to the t.test function
+multi.ttest <- function(mat, ...) {
+  mat <- as.matrix(mat)
+  n <- ncol(mat)
+  p.mat<- matrix(NA, n, n)
+  diag(p.mat) <- 1
+  for (i in 1:(n - 1)) {
+    for (j in (i + 1):n) {
+      test <- t.test(mat[, i], mat[, j], ...)
+      p.mat[i, j] <- p.mat[j, i] <- test$p.value
+    }
+  }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  signif(p.mat,4)
+}
+
+errors <- cbind(base.error ,
+                str.error,
+                str.bonds.error,
+                str.news.error,
+                str.Nocables.all.error,
+                str.cables.error,
+                all.error)
+
+p.mat<-multi.ttest(errors)
+p.mat <- round(p.mat, 4)
+upper<-p.mat
+upper[upper.tri(p.mat, diag=F)]<-""
+diag(upper) <- ''
+
+upper<-as.data.frame(upper)
+
+x1 <- xtable(upper, type = "latex")
+row.names(x1) <- names(x1) <- c('Base','Structural','S+Bonds', 'S+News', 'S+Bonds+News', 'S+Cables', 'S+Bonds+News+Cables' )
+print(x1, file = "Results/table4_appendix_significanceTests.tex")
+```
+
+\newpage
+
+##  Marginal effect of each topic on MAE
+What happens if we remove a particular cable topic?
+
+First run an iterative loop. Learn from t1->t200, predict on t201, etc. Collect these predictions in m1
+
+```{r}
+voi <- 'cables' # 'news' or 'cables'
+
+for(voi in c('cables', 'news')){
+  print(paste('MAE when', voi, 'topics are removed'))
+  m1T$decade <- round(m1T$year/10)*10
+  results <- NULL
+  for(topicNb in 1:25){
+    print(paste('Calculating MAE when ', voi, 'topic', topicNb, 'is removed'))
+
+    if(voi == 'cables'){
+      topicToRm <- paste('l1.topic', topicNb, sep='')
+      topic.varsNew.list <- topic.vars.list[-which(topic.vars.list%in% topicToRm)]
+      topic.varsNew <- paste(topic.varsNew.list, collapse='+')
+      formula_str_cables_bonds_news_ttw <- as.formula(paste('timeToMid ~ ', str.vars,'+', topic.varsNew ,'+', news.vars, '+', bonds.vars))
+    }
+
+    if(voi == 'news'){
+      topicToRm <- paste('l1.news_t', topicNb, sep='')
+      news.varsNew.list <- news.vars.list[-which(news.vars.list %in% topicToRm)]
+      news.varsNew.list <-   news.varsNew.list[-1]
+      news.varsNew <- paste(news.varsNew.list, collapse='+')
+
+      formula_str_cables_bonds_news_ttw <- as.formula(paste('timeToMid ~ ', str.vars,'+', topic.vars ,'+', news.varsNew, '+', bonds.vars))
+    }
+
+    formula_str_cables_bonds_news_ttw.full <- as.formula(paste('timeToMid ~ ', str.vars,'+', topic.vars ,'+', news.vars, '+', bonds.vars))
+
+    ##  initialize the variables where we'll store our results
+    m1T$pWar.lm.str.cables.bonds.news <- NA
+    m1T$pWar.lm.str.cables.bonds.news.full <- NA
+
+    for(endTime in 100:(nrow(m1T)-1)){
+      if(endTime %%100 ==0){
+        #print( paste('...', endTime,'predictions completed, up to',m1T$date[endTime]) )
+      }
+      learning.data <- m1T[1:endTime,]
+      tryCatch({ # to ensure the loop continues even if there are errors
+
+        lm.str.cables.bonds.news <- lm(formula_str_cables_bonds_news_ttw, data = learning.data)
+        lm.str.cables.bonds.news.full <- lm(formula_str_cables_bonds_news_ttw.full, data = learning.data)
+        m1T$pWar.lm.str.cables.bonds.news[endTime+1] <- predict(lm.str.cables.bonds.news, newdata=m1T[endTime,], type = 'response')
+        m1T$pWar.lm.str.cables.bonds.news.full[endTime+1] <- predict(lm.str.cables.bonds.news.full, newdata=m1T[endTime,], type = 'response')
+
+
+      }, error=function(e){cat('')}
+      )
+    }
+
+
+    ## Evaluate the quality of our TIME TO MID predictions
+    for(this.year in min(m1T$year):max(m1T$year)){
+      all.error.this.year <- (abs(m1T$timeToMid[m1T$year==this.year] - m1T$pWar.lm.str.cables.bonds.news[m1T$year==this.year]))
+      all.error.this.year.full <- (abs(m1T$timeToMid[m1T$year==this.year] - m1T$pWar.lm.str.cables.bonds.news.full[m1T$year==this.year]))
+
+      all.error <- (abs(m1T$timeToMid - m1T$pWar.lm.str.cables.bonds.news))
+      all.error.full <- (abs(m1T$timeToMid - m1T$pWar.lm.str.cables.bonds.news.full))
+
+      lower.CI <- upper.CI <- NULL # store CIs here
+      boot.obj <- NULL
+      for(i in 1:1000){
+        new.object <- sample(all.error, length(all.error), replace = T)
+        boot.obj <- c(boot.obj, mean(new.object, na.rm=T))
+      }
+
+      lower.CI <- quantile(boot.obj, 0.025, na.rm=T)
+      upper.CI <- quantile(boot.obj, 0.975, na.rm=T)
+
+
+      result <- data.frame(topic = topicToRm,
+                           year = this.year,
+                           mae = mean(all.error, na.rm=T),
+                           mae.this.year = mean(all.error.this.year, na.rm=T),
+                           mae.full = mean(all.error.full, na.rm=T),
+                           mae.full.this.year = mean(all.error.this.year.full, na.rm=T),
+                           lower.ci =  lower.CI,
+                           upper.ci =  upper.CI
+      )
+
+      results <- rbind(results, result)
+
+
+    }
+  }
+  
+
+  
+if(voi =='cables'){
+  agByYear <- aggregate(data.frame(avgMaeByYear=results$mae.this.year, upperCI = results$upper.ci, lowerCI=results$lower.ci), by=list(year=results$year), FUN=function(x) mean(x, na.rm=T))
+  ##pdf(paste('Results/maebyyear_', voi, '.pdf', sep=''))
+  {
+    par(mar=c(5,5,1,1))
+    print(plot(agByYear$year[agByYear$year>1887], agByYear$avgMaeByYear[agByYear$year>1887], type='l', xlab='Year', ylab='MAE', cex.axis=2, cex.lab=2, lwd=2))
+    print(rug(jitter(m1T$year[m1T$hasMid==1]), ticksize = 0.04, side = 3, lwd = 0.5, col = par("fg")))
+  }
+  ##dev.off()
+}
+  
+  
+  agByTopic <- aggregate(data.frame(avgMaeByTopic=results$mae, upperCI = results$upper.ci, lowerCI=results$lower.ci), by=list(topic=as.character(results$topic)), FUN=function(x)(mean(x, na.rm=T)))
+
+
+  if(voi == 'cables') agByTopic$topicN <- str_replace(agByTopic$topic, pattern='l1.topic', replacement = '')
+  if(voi == 'news') agByTopic$topicN <- str_replace(agByTopic$topic, pattern='l1.news_t', replacement = '')
+  agByTopic <- agByTopic[agByTopic$topicN !=0,]
+  ##pdf(paste('Results/maeByTopic_',voi,'.pdf', sep=''))
+  {
+    agByTopicPlot <- agByTopic[!is.na(agByTopic$avgMaeByTopic),]
+    if(voi=='news')agByTopicPlot <- agByTopicPlot[as.numeric(agByTopicPlot$topicN) <=14,]
+    print(
+      ggdotchart(agByTopicPlot,
+               x = "topic", y = "avgMaeByTopic",
+               sorting = "descending",                       # Sort value in descending order
+               #add = "segments",                             # Add segments from y = 0 to dots
+               rotate = TRUE,                                # Rotate vertically
+               dot.size = 8,                                 # Large dot size
+               label =agByTopicPlot$topicN,                        # Add value to dot
+               ylab='MAE',
+               xlab='',
+               font.ytickslab = 0,
+               font.xtickslab = 16,
+               font.label = list(color = "white", size = 14,
+                                 vjust = 0.5))+               # Adjust label parameters
+      geom_hline(data = agByTopic, aes(yintercept = mean(results$mae.full, na.rm=T)),
+                 linetype = 2)+
+      theme(legend.position="none", plot.margin = margin(0.5, 0.9, 0.5, 0, "cm"),
+            axis.text.x = element_text(size=16),
+            axis.title.x = element_text(size=22))
+    )
+  }
+  ##dev.off()
+
+
+
+  # MAE by topic-year
+
+  results3 <- results[order(results$topic, results$year),]
+  results3$topicName <- as.character(results3$topic)
+  listTopics <- NULL
+  if(voi=='cables')counter <- 1:25
+  if(voi=='news')counter <- 1:14
+  for(this.topic in counter){
+    if(voi =='cables')results3$topicName[results3$topicName == paste('l1.topic', this.topic, sep='')] <- paste('Topic', this.topic)
+    if(voi =='news')results3$topicName[results3$topicName == paste('l1.news_t', this.topic, sep='')] <- paste('Topic', this.topic)
+    listTopics <- c(listTopics, paste('Topic', this.topic))
+  }
+  results3$topicName_f = factor(results3$topicName,
+                                levels=listTopics) # needed, else ggplot below does not order the facets in the right order.
+
+
+  results4 <- results3[results3$year>1887 &!is.na(results3$topicName_f),]
+  lm1 <- lm(results4$mae.this.year ~ results4$mae.full.this.year + as.factor(results4$year))
+  results4$fitted <- predict(lm1, newdata=results4[results4$year>1887, ])
+  results4$resid <- results4$mae.this.year - results4$fitted
+
+
+  if(voi == 'cables'){
+    dat_labels <- data.frame(
+      label = 1:25,
+      topicName_f = unique(results4$topicName_f))
+  }
+
+  if(voi == 'news'){
+    dat_labels <- data.frame(
+      label = 1:14,
+      topicName_f = unique(results4$topicName_f))
+  }
+
+  ##pdf(paste('Results/maeByTopicYear_TS', voi, '.pdf', sep=''))
+  {
+    print(
+      ggplot(results4[results4$year>1887,], aes(x =year, y = resid)) +
+      facet_wrap(topicName_f ~., ncol=4, scales='free_y'
+      ) + ylab('MAE') + xlab('Year')+
+      geom_path() + theme_bw() +
+      theme(panel.grid.minor.x = element_blank(),
+            panel.grid.minor.y = element_blank(),
+            axis.text.x = element_text(angle = 90, size=12),
+            axis.text.y = element_text(size=11),
+            axis.title.x = element_text(size=16),
+            axis.title.y = element_text(size=16),
+            strip.text.x = element_blank()
+      ) +
+      geom_label(
+        size=6,
+        data    = dat_labels, fill='lightgrey',
+        mapping = aes(x = -Inf, y = -Inf, label = label),
+        hjust   = -0,
+        vjust   = 0
+      ) +
+      geom_hline(data = results4, aes(yintercept = 0),
+                 linetype = 2, col='darkgrey' )              # ggplot2 theme
+    )
+  }
+  ##dev.off()
+
+}
+
+```
